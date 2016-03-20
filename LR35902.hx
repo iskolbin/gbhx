@@ -163,11 +163,9 @@ class LR35902 {
 	}
 
 	// Control flow
-	inline function jmpSign( v: Bool ) {
+	inline function jmps( v: Bool ) {
 		if ( v ) {
-			var d8: UInt = readByte(pc+1);
-			var dpc = utos8( d8 );
-			pc += dpc + 2;
+			pc += utos8( readByte(pc+1) )+ 2;
 			cycles(12);
 		} else {
 			pc += 2;
@@ -233,32 +231,128 @@ class LR35902 {
 	}
 
 	// Arithmetic operations
-	inline function byteAdd( v: UInt ) {
-		var hF = (( a & 0xf ) + ( v & 0xf )) > 0xf;
-		fc = (a + v) > 0xff;
-		a += v;
+	inline function _byteArithmetic( v: UInt ) {
 		fn = false;
-		fz = a == 0;
+		fz = v == 0;
 		pc++;
 		cycles(4);
+	}
+
+	inline function byteAdd( v: UInt ) {
+		fh = (( a & 0xf ) + ( v & 0xf )) > 0xf;
+		fc = (a + v) > 0xff;
+		a += v;
+		_byteArithmetic( a );
 	}	
+
+	inline function byteAdc( v: UInt ) {
+		var car = fc ? 1 : 0;
+		fh = (( a & 0xf ) + ( v & 0x0f ) + car) > 0xf;
+		fc = (a + v + car) > 0xff;
+		a += v + car;
+		_byteArithmetic( a );
+	}
+
+	inline function byteSub( v: UInt ) {
+		fh = (v & 0xf) > (a & 0xf);
+		fc = v > a;
+		a -= v;
+		_byteArithmetic( a );
+	}
+
+	inline function byteSbc( v: UInt ) {
+		var car = fc ? 0 : 1;
+		var subv = v + car;
+		fh = ( (v&0xf) + car ) > (a & 0xf);
+		fc = subv > a;
+		a -= subv;
+		_byteArithmetic( a );
+	}
+
+	inline function byteInc( v: UInt ) {
+		fh = v & 0xf == 0xf;
+		v = uint8(v+1);
+		_byteArithmetic( v );
+		return v;
+	}
+	
+	inline function byteDec( v: UInt ) {
+		fh = ((v-1) & 0xf) == (v & 0xf);
+		v = uint8(v-1);
+		_byteArithmetic( v );
+		return v;
+	}
+
+	inline function _byteLogical( v: UInt ) {
+		a = v;
+		fz = a == 0;
+		fn = false;
+		fh = true;
+		fc = false;
+		pc++;
+		cycles(4);
+	}
+
+	inline function byteAnd( v: UInt ) _byteLogical( a&v );
+
+	inline function byteXor( v: UInt ) _byteLogical( a^v );
+
+	inline function byteOr( v: UInt ) _byteLogical( a|v );
+
+	inline function byteCmp( v: UInt ) {
+		fh = ( v & 0xf ) > ( a & 0xf );
+		fc = v > a;
+		fz = uint8( a - v ) == 0;
+		fn = true;
+		pc++;
+		cycles(4);
+	}
 
 	inline function cycles( v: Int ) {}
 
+	inline function readcb( v: UInt ) {
+		//TODO
+	}
+
+	inline function nop() {
+		cycles(4);
+		pc++;
+	}
+
+	inline function regByIndex( index ) return switch( index ) {
+		case 0: b;
+		case 1: c;
+		case 2: d;
+		case 3: e;
+		case 4: h;
+		case 5: l;
+		case 6: readByte( hl );
+		case 7: a;
+		case _: 0;
+	}
+
+	inline function load( index ) {
+		pc++;
+		cycles( index == 6 ? 8 : 4 );
+		return regByIndex( index );
+	}
+	
 	public function run() {
+		var op = readByte(pc);
 		while ( !halt ) {
-			switch ( ram.get( pc )) {
-				/*case 0x00: cycles(4); 1; 
-				case 0x10: halt = true; cycles(4); 2;
-				case 0x76: if ( ime ) halt = true; cycles(4); 1;
-				case 0xf3: ime = false; cycles(4); 1;
-				case 0xfb: ime = true; cycles(4); 1;
-*/
-				case 0x18: jmpSign( true );
-				case 0x20: jmpSign( !fz );
-				case 0x30: jmpSign( !fc );
-				case 0x28: jmpSign( fz );
-				case 0x38: jmpSign( fc );
+			switch ( op ) {
+				case 0x00: nop();
+				case 0x10: halt = true; cycles(4); pc+=2;
+				case 0x76: if ( ime ) halt = true; cycles(4); pc++;
+				case 0xf3: ime = false; cycles(4); pc++;
+				case 0xfb: ime = true; cycles(4); pc++;
+				case 0xcb: readcb( pc+1 );
+				
+				case 0x18: jmps( true );
+				case 0x20: jmps( !fz );
+				case 0x30: jmps( !fc );
+				case 0x28: jmps( fz );
+				case 0x38: jmps( fc );
 
 				case 0xc3: jmp( true );
 				case 0xc2: jmp( !fz );
@@ -290,14 +384,14 @@ class LR35902 {
 
 				case 0xe9: pc = hl; cycles(4);
 
-				case 0x03: var v = wordInc( bc ); bc = v;
-				case 0x13: var v = wordInc( de ); de = v;
-				case 0x23: var v = wordInc( hl ); hl = v;
+				case 0x03: bc = wordInc( bc );
+				case 0x13: de = wordInc( de );
+				case 0x23: hl = wordInc( hl );
 				case 0x33: sp++; pc++; cycles(8);
 
-				case 0x0b: var v = wordDec( bc ); bc = v;
-				case 0x1b: var v = wordDec( de ); de = v;
-				case 0x2b: var v = wordDec( hl ); hl = v;
+				case 0x0b: bc = wordDec( bc );
+				case 0x1b: de = wordDec( de );
+				case 0x2b: hl = wordDec( hl );
 				case 0x3b: sp--; pc--; cycles(8);
 
 				case 0x09: wordAdd( bc );
@@ -323,8 +417,81 @@ class LR35902 {
 					fn = false;
 					pc += 2;
 					cycles(16);
+				
+				// 8-bit loads
+				case 0x40|0x41|0x42|0x43|0x44|0x45|0x46|0x47: b = load(op-0x40);
+				case 0x48|0x49|0x4a|0x4b|0x4c|0x4d|0x4e|0x4f: c = load(op-0x48);
+				case 0x50|0x51|0x52|0x53|0x54|0x55|0x56|0x57: d = load(op-0x50);
+				case 0x58|0x59|0x5a|0x5b|0x5c|0x5d|0x5e|0x5f: e = load(op-0x58);
+				case 0x60|0x61|0x62|0x63|0x64|0x65|0x66|0x67: h = load(op-0x60);
+				case 0x68|0x69|0x6a|0x6b|0x6c|0x6d|0x6e|0x6f: l = load(op-0x68);
+				case 0x70|0x71|0x72|0x73|0x74|0x75|0x76|0x77:
+					pc++;
+					cycles(8);
+					var v = regByIndex(op-0x70);
+					writeByte( hl, v );
+				case 0x78|0x79|0x7a|0x7b|0x7c|0x7d|0x7e|0x7f: a = load(op-0x78);
 
-		/*		case 0x01: dc = program.getUInt16( pc+1 ); cycles(16); 3;
+				// Load immidiate data into register
+				case 0x06: b = readByte(pc+1); cycles(8); pc += 2;
+				case 0x0e: c = readByte(pc+1); cycles(8); pc += 2;
+				case 0x16: d = readByte(pc+1); cycles(8); pc += 2;
+				case 0x1e: e = readByte(pc+1); cycles(8); pc += 2;
+				case 0x26: h = readByte(pc+1); cycles(8); pc += 2;
+				case 0x2e: l = readByte(pc+1); cycles(8); pc += 2;
+				case 0x36: writeByte( hl, readByte(pc+1)); cycles(12); pc += 2;
+				case 0x3e: a = readByte(pc+1); cycles(8); pc += 2;
+
+				// Load A into 0xff00 + immidiate data or visa-versa
+				case 0xe0: writeByte( 0xff00 + readByte(pc+1), a ); cycles(12); pc += 2;
+				case 0xf0: a = readByte( 0xff00 + readByte(pc+1)); cycles(12); pc += 2;
+									 
+				// Load A into 0xff + c or visa-versa
+				case 0xe2: writeByte( 0xff + c, a ); cycles(8); pc++;
+				case 0xf2: a = readByte( 0xff00 + c ); cycles(8); pc ++;
+
+				// Load A into immediate address or visa-versa
+				case 0xea: writeByte( readWord( pc+1 ), a ); cycles(16); pc += 3;
+				case 0xfa: a = readByte( readWord( pc+1 )); cycles(16); pc += 3;
+				
+				case 0x02: writeByte( readWord( bc ), a ); cycles(8); pc++;
+				case 0x12: writeByte( readWord( de ), a ); cycles(8); pc++;
+				case 0x22: writeByte( readWord( hl ), a ); hl++; cycles(8); pc++; 
+				case 0x32: writeByte( readWord( hl ), a ); hl--; cycles(8); pc++; 
+
+				case 0x0a: a = readByte( bc ); cycles(8); pc++;
+				case 0x1a: a = readByte( de ); cycles(8); pc++;
+				case 0x2a: a = readByte( hl ); hl++; cycles(8); pc++;
+				case 0x3a: a = readByte( hl ); hl--; cycles(8); pc++;
+
+				// 8 bit arithmetic and logic operations
+				case 0x80|0x81|0x82|0x83|0x84|0x85|0x86|0x87: var v = regByIndex(op-0x80); byteAdd( v ); if (op==0x86) cycles(8); pc++;
+				case 0x88|0x89|0x8a|0x8b|0x8c|0x8d|0x8e|0x8f: var v = regByIndex(op-0x88); byteAdc( v ); if (op==0x8e) cycles(8); pc++;
+				case 0x90|0x91|0x92|0x93|0x94|0x95|0x96|0x97: var v = regByIndex(op-0x90); byteSub( v ); if (op==0x96) cycles(8); pc++;
+				case 0x98|0x99|0x9a|0x9b|0x9c|0x9d|0x9e|0x9f: var v = regByIndex(op-0x98); byteSbc( v ); if (op==0x9e) cycles(8); pc++;
+				case 0xa0|0xa1|0xa2|0xa3|0xa4|0xa5|0xa6|0xa7: var v = regByIndex(op-0xa0); byteAnd( v ); if (op==0xa6) cycles(8); pc++;
+				case 0xa8|0xa9|0xaa|0xab|0xac|0xad|0xae|0xaf: var v = regByIndex(op-0xa8); byteXor( v ); if (op==0xae) cycles(8); pc++;
+				case 0xb0|0xb1|0xb2|0xb3|0xb4|0xb5|0xb6|0xb7: var v = regByIndex(op-0xb0); byteOr( v ); if (op==0xb6) cycles(8); pc++;
+				case 0xb8|0xb9|0xba|0xbb|0xbc|0xbd|0xbe|0xbf: var v = regByIndex(op-0xb8); byteCmp( v ); if (op==0xbe) cycles(8); pc++;
+
+				case 0xc6: byteAdd( readByte(pc+1)); cycles(8); pc++;
+				case 0xce: byteAdc( readByte(pc+1)); cycles(8); pc++;
+				case 0xd6: byteSub( readByte(pc+1)); cycles(8); pc++;
+				case 0xde: byteSbc( readByte(pc+1)); cycles(8); pc++;
+				case 0xe6: byteAnd( readByte(pc+1)); cycles(8); pc++;
+				case 0xf6: byteOr( readByte(pc+1)); cycles(8); pc++;
+				case 0xee: byteXor( readByte(pc+1)); cycles(8); pc++;
+				case 0xfe: byteCmp( readByte(pc+1)); cycles(8); pc++;
+
+				case 0x2f: 
+					a = 0xff - a;
+					fh = true;
+					fn = true;
+					pc++;
+					cycles(4);
+
+
+									 /*		case 0x01: dc = program.getUInt16( pc+1 ); cycles(16); 3;
 				case 0x02: bc = a; cycles(8); 1;
 				case 0x03: bc += 1; cycles(8); 1;
 				case 0x04: b += 1; fz = b == 0; fn = false; fh = fz; cycles(4); 1;
